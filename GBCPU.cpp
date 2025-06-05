@@ -85,9 +85,11 @@ void GBCPU::Clock() {
 
 	if (remainingCycles == 0) {
 
+		pcToLog = pc;
 
 		instruction = Read(pc++);
 		if (instruction == 0xCB) {
+			useCBTable = true;
 			instruction = Read(pc++);
 		}
 		
@@ -102,14 +104,21 @@ void GBCPU::Clock() {
 		cpulog.Log(" H:" + std::format("{0:#04X}", h).erase(0, 2));
 		cpulog.Log(" L:" + std::format("{0:#04X}", l).erase(0, 2));
 		cpulog.Log(" SP:" + std::format("{0:#06X}", sp).erase(0, 2));
-		cpulog.Log(" PC:" + std::format("{0:#06X}", pc - 1).erase(0, 2));
-		cpulog.Log(" PCMEM:" + std::format("{0:#04X}", Read(pc - 1)).erase(0, 2));
-		cpulog.Log("," + std::format("{0:#04X}", Read(pc)).erase(0, 2));
-		cpulog.Log("," + std::format("{0:#04X}", Read(pc + 1)).erase(0, 2));
-		cpulog.Log("," + std::format("{0:#04X}", Read(pc + 2)).erase(0, 2));
+		cpulog.Log(" PC:" + std::format("{0:#06X}", pcToLog).erase(0, 2));
+		cpulog.Log(" PCMEM:" + std::format("{0:#04X}", Read(pcToLog)).erase(0, 2));
+		cpulog.Log("," + std::format("{0:#04X}", Read(pcToLog + 1)).erase(0, 2));
+		cpulog.Log("," + std::format("{0:#04X}", Read(pcToLog + 2)).erase(0, 2));
+		cpulog.Log("," + std::format("{0:#04X}", Read(pcToLog + 3)).erase(0, 2));
 		cpulog.Log(std::format("\n"));
 		
-		(this->*opcodeLookup[instruction].operate)();
+		if (!useCBTable) {
+			(this->*opcodeLookup[instruction].operate)();
+		}
+		else {
+			useCBTable = false;
+			(this->*bitShiftLookup[instruction].operate)();
+		}
+		
 
 	}
 
@@ -117,7 +126,7 @@ void GBCPU::Clock() {
 	 
 	debug_totalCycles++;
 
-	if (debug_totalCycles == 300000) {
+	if (debug_totalCycles == 2400000) {
 		cpulog.WriteToFile();
 	}
 }
@@ -197,15 +206,23 @@ void GBCPU::SetFlags(int setZ, int setN, int setH, int setC) {
 }
 
 uint16_t GBCPU::AddAndSetFlagsU16(uint16_t x, uint16_t y, bool addCarry) {
-	return 0;
+
+	uint32_t result = x + y;
+	uint32_t carry = 0;
+	if (addCarry) { carry = cf; }
+	result += carry;
+	SetFlags(-1, 0, (x & 0x0FFF) + (y & 0x0FFF) + carry > 0x0FFF, result > 0xFFFF);
+	return (uint16_t)result;
 }
 uint8_t GBCPU::AddAndSetFlagsU8(uint8_t x, uint8_t y, bool addCarry) {
 
-	// add the carry flag
 	uint16_t result = (uint16_t)x + (uint16_t)y;
-	if (addCarry) {result += cf;}
+	// add the carry flag
+	uint16_t carry = 0;
+	if (addCarry) {carry = cf;}
+	result += carry;
 
-	SetFlags(result == 0, 0, (x & 0xf) + (y&0xf) > 0xF, result > 0xFF);
+	SetFlags((result & 0xFF) == 0, 0, ((x & 0x0F) + (y&0x0F) + carry) > 0x0F, result > 0xFF);
 
 	return result & 0xFF;
 }
@@ -724,63 +741,63 @@ void GBCPU::DECHL() {
 
 //AND a and 8-bit register
 void GBCPU::ANDAR8(uint8_t reg) {
-	AndAndSetFlags(a, reg);
+	a = AndAndSetFlags(a, reg);
 
 	remainingCycles = 4;
 }
 
 //AND a and HL addressed
 void GBCPU::ANDAHL() {
-	AndAndSetFlags(a, Read(GetHL()));
+	a = AndAndSetFlags(a, Read(GetHL()));
 
 	remainingCycles = 8;
 }
 
 //AND a and 8-bit value
 void GBCPU::ANDAN8() {
-	AndAndSetFlags(a, Read(pc++));
+	a = AndAndSetFlags(a, Read(pc++));
 
 	remainingCycles = 8;
 }
 
 //OP a and 8-bit register
 void GBCPU::ORAR8(uint8_t reg) {
-	OrAndSetFlags(a, reg);
+	a = OrAndSetFlags(a, reg);
 
 	remainingCycles = 4;
 }
 
 //OR a and HL addressed
 void GBCPU::ORAHL() {
-	OrAndSetFlags(a, Read(GetHL()));
+	a = OrAndSetFlags(a, Read(GetHL()));
 
 	remainingCycles = 8;
 }
 
 //OR a and 8-bit value
 void GBCPU::ORAN8() {
-	OrAndSetFlags(a, Read(pc++));
+	a = OrAndSetFlags(a, Read(pc++));
 
 	remainingCycles = 8;
 }
 
 //XOR a and 8-bit register
 void GBCPU::XORAR8(uint8_t reg) {
-	XorAndSetFlags(a, reg);
+	a = XorAndSetFlags(a, reg);
 
 	remainingCycles = 4;
 }
 
 //XOR a and HL addressed
 void GBCPU::XORAHL() {
-	XorAndSetFlags(a, Read(GetHL()));
+	a = XorAndSetFlags(a, Read(GetHL()));
 
 	remainingCycles = 8;
 }
 
 //XOR a and 8-bit value
 void GBCPU::XORAN8() {
-	XorAndSetFlags(a, Read(pc++));
+	a = XorAndSetFlags(a, Read(pc++));
 
 	remainingCycles = 8;
 }
@@ -1118,7 +1135,8 @@ void GBCPU::RLCA() {
 void GBCPU::RRR8(uint8_t& reg) {
 	uint8_t carry = reg & 0b00000001;
 	reg = reg >> 1;
-	if (cf) { reg ^= 0xb10000000; }
+	if (cf) {
+		reg += 0b10000000;}
 	SetFlags(reg == 0, -1, -1, carry);
 
 	remainingCycles = 8;
@@ -1129,7 +1147,7 @@ void GBCPU::RRHL() {
 	uint8_t readByte = Read(hl);
 	uint8_t carry = readByte & 0b00000001;
 	readByte = readByte >> 1;
-	if (cf) { readByte ^= 0xb10000000; }
+	if (cf) { readByte ^= 0b10000000; }
 	Write(hl, readByte);
 	SetFlags(readByte == 0, 0, 0, carry);
 
@@ -1139,7 +1157,7 @@ void GBCPU::RRHL() {
 void GBCPU::RRA() {
 	uint8_t carry = a & 0b00000001;
 	a = a >> 1;
-	if (cf) { a &= 0xb10000000; }
+	if (cf) { a ^= 0b10000000; }
 	SetFlags(0, 0, 0, carry);
 
 	remainingCycles = 4;
@@ -1149,7 +1167,7 @@ void GBCPU::RRA() {
 void GBCPU::RRCR8(uint8_t& reg) {
 	uint8_t carry = reg & 0b00000001;
 	reg = reg >> 1;
-	if (carry) { reg ^= 0xb10000000; }
+	if (carry) { reg ^= 0b10000000; }
 	SetFlags(reg == 0, 0, 0, carry);
 
 	remainingCycles = 8;
@@ -1160,7 +1178,7 @@ void GBCPU::RRCHL() {
 	uint8_t readByte = Read(hl);
 	uint8_t carry = readByte & 0b00000001;
 	readByte = readByte >> 1;
-	if (carry) { readByte ^= 0xb10000000; }
+	if (carry) { readByte ^= 0b10000000; }
 	Write(hl, readByte);
 	SetFlags(readByte == 0, 0, 0, carry);
 
@@ -1170,7 +1188,7 @@ void GBCPU::RRCHL() {
 void GBCPU::RRCA() {
 	uint8_t carry = a & 0b00000001;
 	a = a >> 1;
-	if (carry) { a ^= 0xb10000000; }
+	if (carry) { a ^= 0b10000000; }
 	SetFlags(0, 0, 0, carry);
 
 	remainingCycles = 4;
@@ -1224,7 +1242,7 @@ void GBCPU::SRAHL() {
 void GBCPU::SRLR8(uint8_t &reg) {
 	bool setCf = reg & 0b00000001;
 	reg = reg >> 1;
-	SetFlags(a == 0, 0, 0, setCf);
+	SetFlags(reg == 0, 0, 0, setCf);
 
 	remainingCycles = 8;
 }

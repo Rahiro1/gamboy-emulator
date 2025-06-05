@@ -505,6 +505,9 @@ private:
     bool enableIntteruptsAfterNext = false;
     bool interruptsEnabled = false;
 
+    uint16_t pcToLog;
+    bool useCBTable = false;
+
     struct OpcodeInfo {
         void (GBCPU::* operate)() = nullptr;
     };
