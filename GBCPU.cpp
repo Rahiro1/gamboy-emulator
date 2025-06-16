@@ -126,7 +126,7 @@ void GBCPU::Clock() {
 	 
 	debug_totalCycles++;
 
-	if (debug_totalCycles == 2400000) {
+	if (debug_totalCycles == 9000000) {
 		cpulog.WriteToFile();
 	}
 }
@@ -229,20 +229,17 @@ uint8_t GBCPU::AddAndSetFlagsU8(uint8_t x, uint8_t y, bool addCarry) {
 
 uint16_t GBCPU::AddAndSetFlagsU16FromS8(uint16_t x, int8_t y, bool addCarry) {
 
-	// TODO - implement this method properly
+	// TODO - implement this method properly 
 
-	int setH = 0;
-	int setC = 0;
+	uint32_t result = (uint32_t)x + y;
+	uint8_t carry = 0;
 
-	uint8_t flagTest = x & y;
+	if (addCarry) { carry = cf; }
+	result += carry;
 
-	if (flagTest & 0x08) {setH = 1;}
-	if (flagTest & 0x0F) {setC = 1;}
+	SetFlags(0, 0, (x & 0x0F) + (y & 0x0F) > 0x0F, (x & 0xFF) + (y & 0xFF) > 0xFF);
 
-	SetFlags(0, 0, setH, setC);
-
-	x += y;
-	return x;
+	return result & 0xFFFF;
 }
 
 uint8_t GBCPU::SubAndSetFlagsU8(uint8_t x, uint8_t y, bool addCarry)
@@ -508,12 +505,11 @@ void GBCPU::LDSPHL() {
 //loads HL, but first loaads the stck pointer plus a signed 8-bit value
 void GBCPU::LDHLSPADDE8() {
 	int8_t value = Read(pc++);
+	int16_t temp;
 
-	int16_t signedSp = (int16_t)sp;
-	signedSp += (int16_t)value;
-	sp = (uint16_t)signedSp;
+	temp = AddAndSetFlagsU16FromS8(sp, value, false);
 
-	SetHL(sp);
+	SetHL(temp);
 
 	remainingCycles = 12;
 }
@@ -919,7 +915,7 @@ void GBCPU::JPCCN16(bool condition) {
 void GBCPU::JPHL() {
 	pc = GetHL();;
 
-	remainingCycles = 1;
+	remainingCycles = 4;
 }
 
 //relative Jumps
